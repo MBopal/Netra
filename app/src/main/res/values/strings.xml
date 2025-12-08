@@ -1,3 +1,18 @@
 <resources>
     <string name="app_name">Netra</string>
+    <string name="accessibility_service_description">
+        Scam Protector melindungi Anda dari penipuan digital dengan mendeteksi pesan mencurigakan secara otomatis.
+        \n\n
+        Layanan ini akan:
+        \n• Membaca konten pesan di aplikasi messaging (WhatsApp, Telegram, SMS)
+        \n• Menganalisis notifikasi dari aplikasi e-commerce dan banking
+        \n• Menampilkan peringatan jika terdeteksi pola penipuan
+        \n\n
+        Privasi Anda dijaga:
+        \n• Data tidak dikirim ke server eksternal
+        \n• Analisis dilakukan di perangkat Anda
+        \n• Tidak ada penyimpanan data pribadi
+        \n\n
+        Untuk orang tua yang ingin terlindungi dari penipuan online.
+    </string>
 </resources>
