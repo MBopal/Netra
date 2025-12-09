@@ -7,31 +7,30 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
 import android.os.Build
+import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.core.app.NotificationCompat
 import org.tensorflow.lite.Interpreter
 import java.io.FileInputStream
-import java.nio.MappedByteBuffer
 import java.nio.channels.FileChannel
 import org.json.JSONObject
-import java.nio.FloatBuffer
 
 class ScamDetectorAccessibilityService : AccessibilityService() {
 
     private lateinit var interpreter: Interpreter
     private lateinit var tokenizer: Map<String, Int>
-    private val maxLength = 100  // Updated to match training
-    private val vocabSize = 5000  // Updated to match training
-    private val scamThreshold = 0.5f  // Balanced threshold
+    private val maxLength = 100
+    private val vocabSize = 5000
+    private val scamThreshold = 0.5f
 
     private val targetPackages = setOf(
         "com.whatsapp",
 //        "com.instagram.android",
-//        "com.facebook.orca", // Messenger
+//        "com.facebook.orca",
 //        "org.telegram.messenger",
-        "com.android.mms", // SMS
-//        "com.google.android.gm", // Gmail
+        "com.android.mms",
+//        "com.google.android.gm",
 //        "com.shopee.id",
 //        "com.tokopedia.tkpd",
 //        "com.gojek.app"
@@ -40,7 +39,6 @@ class ScamDetectorAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
 
-        // Configure accessibility service
         val info = AccessibilityServiceInfo().apply {
             eventTypes = AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED or
                     AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED or
@@ -52,52 +50,80 @@ class ScamDetectorAccessibilityService : AccessibilityService() {
         }
         serviceInfo = info
 
-        // Load model and tokenizer
         try {
+            Log.d("ScamDetector", "Starting service...")
             loadModel()
+            Log.d("ScamDetector", "✓ Model loaded")
             loadTokenizer()
+            Log.d("ScamDetector", "✓ Tokenizer loaded")
             createNotificationChannel()
             showServiceStartedNotification()
+            Log.d("ScamDetector", "✓ Service started successfully")
         } catch (e: Exception) {
+            Log.e("ScamDetector", "❌ Error starting service", e)
             e.printStackTrace()
         }
     }
 
     private fun loadModel() {
-        val modelFile = assets.open("scam_detector_cnn.tflite")
-        val modelBuffer = modelFile.use {
-            val fileChannel = (it as FileInputStream).channel
-            fileChannel.map(FileChannel.MapMode.READ_ONLY, 0, fileChannel.size())
-        }
+        try {
+            val modelFile = assets.open("scam_detector_cnn.tflite")
+            val modelBuffer = modelFile.use {
+                val fileChannel = (it as FileInputStream).channel
+                fileChannel.map(FileChannel.MapMode.READ_ONLY, 0, fileChannel.size())
+            }
 
-        // Configure interpreter options for LSTM support
-        val options = Interpreter.Options().apply {
-            setNumThreads(4)  // Multi-threading for better performance
-            setUseNNAPI(false)  // Disable NNAPI as it may not support SELECT_TF_OPS
-        }
+            val options = Interpreter.Options().apply {
+                setNumThreads(4)
+                setUseNNAPI(false)
+            }
 
-        interpreter = Interpreter(modelBuffer, options)
+            interpreter = Interpreter(modelBuffer, options)
+            Log.d("ScamDetector", "✓ Model loaded successfully")
+        } catch (e: Exception) {
+            Log.e("ScamDetector", "❌ Error loading model", e)
+            e.printStackTrace()
+            throw e
+        }
     }
 
     private fun loadTokenizer() {
-        val tokenizerJson = assets.open("tokenizer_cnn.json").bufferedReader().use { it.readText() }
-        val jsonObject = JSONObject(tokenizerJson)
-        val config = jsonObject.getJSONObject("config")
-        val wordIndex = config.getJSONObject("word_index")
+        try {
+            val tokenizerJson = assets.open("tokenizer_cnn.json").bufferedReader().use { it.readText() }
+            val jsonObject = JSONObject(tokenizerJson)
 
-        tokenizer = buildMap {
-            wordIndex.keys().forEach { key ->
-                put(key, wordIndex.getInt(key))
+            // Fix: Parse config first, then get word_index as STRING
+            val config = jsonObject.getJSONObject("config")
+            val wordIndexString = config.getString("word_index")
+
+            // Parse the string as JSON
+            val wordIndex = JSONObject(wordIndexString)
+
+            tokenizer = buildMap {
+                wordIndex.keys().forEach { key ->
+                    put(key, wordIndex.getInt(key))
+                }
             }
+
+            Log.d("ScamDetector", "✓ Tokenizer loaded: ${tokenizer.size} words")
+        } catch (e: Exception) {
+            Log.e("ScamDetector", "❌ Error loading tokenizer", e)
+            throw e
         }
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         event ?: return
 
-        // Check if event is from target app
         val packageName = event.packageName?.toString() ?: return
-        if (!targetPackages.contains(packageName)) return
+
+        Log.d("ScamDetector", "Event from: $packageName")
+
+        if (!targetPackages.contains(packageName)) {
+            return
+        }
+
+        Log.d("ScamDetector", "✓ Target package detected: $packageName")
 
         when (event.eventType) {
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
@@ -118,13 +144,13 @@ class ScamDetectorAccessibilityService : AccessibilityService() {
         rootNode.recycle()
 
         val fullText = textList.joinToString(" ")
-        if (fullText.isNotBlank()) {
+        if (fullText.isNotBlank() && fullText.length > 10) {
+            Log.d("ScamDetector", "Text extracted: ${fullText.take(100)}...")
             checkForScam(fullText, event.packageName.toString())
         }
     }
 
     private fun extractTextFromNode(node: AccessibilityNodeInfo, textList: MutableList<String>) {
-        // Get text from current node
         node.text?.toString()?.let {
             if (it.length > 5) textList.add(it)
         }
@@ -132,7 +158,6 @@ class ScamDetectorAccessibilityService : AccessibilityService() {
             if (it.length > 5) textList.add(it)
         }
 
-        // Recursively check child nodes
         for (i in 0 until node.childCount) {
             node.getChild(i)?.let { child ->
                 extractTextFromNode(child, textList)
@@ -148,45 +173,51 @@ class ScamDetectorAccessibilityService : AccessibilityService() {
         val text = notification.extras.getString(Notification.EXTRA_TEXT) ?: ""
         val fullText = "$title $text"
 
-        if (fullText.isNotBlank()) {
+        if (fullText.isNotBlank() && fullText.length > 10) {
+            Log.d("ScamDetector", "Notification text: ${fullText.take(100)}...")
             checkForScam(fullText, event.packageName.toString())
         }
     }
 
     private fun checkForScam(text: String, packageName: String) {
-        if (text.length < 10) return
+        if (text.length < 10) {
+            Log.d("ScamDetector", "Text too short, skipping")
+            return
+        }
 
         try {
+            Log.d("ScamDetector", "Analyzing text: ${text.take(50)}...")
             val prediction = predictScam(text)
+            Log.d("ScamDetector", "Prediction score: $prediction (threshold: $scamThreshold)")
 
             if (prediction > scamThreshold) {
+                Log.d("ScamDetector", "⚠️ SCAM DETECTED!")
                 showScamWarning(text, prediction, packageName)
+            } else {
+                Log.d("ScamDetector", "✓ Normal message")
             }
         } catch (e: Exception) {
+            Log.e("ScamDetector", "Error in prediction", e)
             e.printStackTrace()
         }
     }
 
     private fun predictScam(text: String): Float {
-        // Tokenize text
         val tokens = text.lowercase()
             .split(Regex("\\s+"))
             .mapNotNull { tokenizer[it] }
             .take(maxLength)
 
-        // Pad sequence
         val paddedTokens = IntArray(maxLength) { 0 }
         tokens.forEachIndexed { index, token ->
             if (index < maxLength) paddedTokens[index] = token
         }
 
-        // Convert to float array for model input
         val inputArray = Array(1) { FloatArray(maxLength) }
         paddedTokens.forEachIndexed { index, token ->
             inputArray[0][index] = token.toFloat()
         }
 
-        // Run inference
         val outputArray = Array(1) { FloatArray(1) }
         interpreter.run(inputArray, outputArray)
 
@@ -211,6 +242,7 @@ class ScamDetectorAccessibilityService : AccessibilityService() {
             .build()
 
         notificationManager.notify(System.currentTimeMillis().toInt(), notification)
+        Log.d("ScamDetector", "✓ Notification shown")
     }
 
     private fun getAppName(packageName: String): String {
@@ -258,12 +290,15 @@ class ScamDetectorAccessibilityService : AccessibilityService() {
     }
 
     override fun onInterrupt() {
-        // Handle service interruption
+        Log.d("ScamDetector", "Service interrupted")
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        interpreter.close()
+        if (::interpreter.isInitialized) {
+            interpreter.close()
+        }
+        Log.d("ScamDetector", "Service destroyed")
     }
 
     companion object {

@@ -1,5 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <style name="Theme.Netra" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <!-- basic colors (adjust as needed or reference colors.xml) -->
+        <item name="colorPrimary">#2196F3</item>
+        <item name="colorOnPrimary">#FFFFFF</item>
+        <item name="colorSecondary">#4CAF50</item>
+        <item name="android:statusBarColor">#1976D2</item>
+        <item name="android:navigationBarColor">#FFFFFF</item>
 
-    <style name="Theme.Netra" parent="android:Theme.Material.Light.NoActionBar" />
+        <!-- ensure compatibility with AppCompat widgets/dialogs -->
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowBackground">#F5F5F5</item>
+    </style>
 </resources>

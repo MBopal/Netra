@@ -9,7 +9,6 @@ import androidx.appcompat.app.AppCompatActivity
 import android.view.accessibility.AccessibilityManager
 import android.content.Context
 
-
 class MainActivity : AppCompatActivity() {
 
     private lateinit var statusText: TextView
