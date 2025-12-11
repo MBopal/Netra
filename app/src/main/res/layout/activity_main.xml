@@ -59,7 +59,7 @@
     <TextView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Fitur Proteksi:\n\n• Deteksi pesan scam otomatis\n• Peringatan real-time\n• Melindungi di WhatsApp, SMS, dan aplikasi lainnya\n• Menggunakan AI untuk deteksi akurat"
+        android:text="Fitur Proteksi:\n\n• Deteksi pesan scam otomatis\n• Peringatan real-time\n• Melindungi di WhatsApp dan SMS\n• Menggunakan AI untuk deteksi akurat"
         android:textSize="14sp"
         android:textColor="#757575"
         android:layout_marginTop="32dp"

@@ -7,14 +7,17 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.core.app.NotificationCompat
 import org.tensorflow.lite.Interpreter
-import java.io.FileInputStream
-import java.nio.channels.FileChannel
 import org.json.JSONObject
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import java.util.concurrent.ConcurrentHashMap
 
 class ScamDetectorAccessibilityService : AccessibilityService() {
 
@@ -36,8 +39,23 @@ class ScamDetectorAccessibilityService : AccessibilityService() {
 //        "com.gojek.app"
     )
 
+    // Debounce handler: accumulate latest text and schedule processing after delay
+    private val handler = Handler(Looper.getMainLooper())
+    private val debounceDelay = 1500L
+    private var debounceRunnable: Runnable? = null
+    @Volatile private var pendingText: String = ""
+    @Volatile private var pendingPackage: String = ""
+
+    // Per-package cooldown to avoid spamming notifications
+    private val lastAlertTime = ConcurrentHashMap<String, Long>()
+    private val alertCooldown = 5000L
+
     override fun onServiceConnected() {
         super.onServiceConnected()
+
+        System.out.println("CONNECTED")
+        System.out.println("CONNECTED")
+        System.out.println("CONNECTED")
 
         val info = AccessibilityServiceInfo().apply {
             eventTypes = AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED or
@@ -67,11 +85,13 @@ class ScamDetectorAccessibilityService : AccessibilityService() {
 
     private fun loadModel() {
         try {
-            val modelFile = assets.open("scam_detector_cnn.tflite")
-            val modelBuffer = modelFile.use {
-                val fileChannel = (it as FileInputStream).channel
-                fileChannel.map(FileChannel.MapMode.READ_ONLY, 0, fileChannel.size())
-            }
+            val inputStream = assets.open("scam_detector_cnn.tflite")
+            val modelBytes = inputStream.use { it.readBytes() }
+
+            val modelBuffer = ByteBuffer.allocateDirect(modelBytes.size)
+                .order(ByteOrder.nativeOrder())
+            modelBuffer.put(modelBytes)
+            modelBuffer.rewind()
 
             val options = Interpreter.Options().apply {
                 setNumThreads(4)
@@ -119,21 +139,51 @@ class ScamDetectorAccessibilityService : AccessibilityService() {
 
         Log.d("ScamDetector", "Event from: $packageName")
 
-        if (!targetPackages.contains(packageName)) {
-            return
-        }
+        if (!targetPackages.contains(packageName)) return
 
         Log.d("ScamDetector", "✓ Target package detected: $packageName")
 
         when (event.eventType) {
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
             AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED -> {
-                analyzeScreenContent(event)
+                // extract text quickly and debounce actual analysis
+                val rootNode = rootInActiveWindow ?: return
+                val textList = mutableListOf<String>()
+                extractTextFromNode(rootNode, textList)
+                rootNode.recycle()
+                val fullText = textList.joinToString(" ")
+                if (fullText.isNotBlank() && fullText.length > 10) {
+                    scheduleCheck(fullText, packageName)
+                }
             }
             AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED -> {
-                analyzeNotification(event)
+                val notification = event.parcelableData as? Notification ?: return
+                val title = notification.extras.getString(Notification.EXTRA_TITLE) ?: ""
+                val text = notification.extras.getString(Notification.EXTRA_TEXT) ?: ""
+                val fullText = "$title $text"
+                if (fullText.isNotBlank() && fullText.length > 10) {
+                    scheduleCheck(fullText, packageName)
+                }
             }
         }
+    }
+
+    private fun scheduleCheck(text: String, packageName: String) {
+        // keep the latest text and package, reset debounce timer
+        pendingText = text
+        pendingPackage = packageName
+
+        debounceRunnable?.let { handler.removeCallbacks(it) }
+        debounceRunnable = Runnable {
+            try {
+                checkForScam(pendingText, pendingPackage)
+            } catch (e: Exception) {
+                Log.e("ScamDetector", "Error during debounced check", e)
+            } finally {
+                debounceRunnable = null
+            }
+        }
+        handler.postDelayed(debounceRunnable!!, debounceDelay)
     }
 
     private fun analyzeScreenContent(event: AccessibilityEvent) {
@@ -225,23 +275,34 @@ class ScamDetectorAccessibilityService : AccessibilityService() {
     }
 
     private fun showScamWarning(text: String, confidence: Float, packageName: String) {
+        // throttle per package
+        val now = System.currentTimeMillis()
+        val last = lastAlertTime[packageName] ?: 0L
+        if (now - last < alertCooldown) {
+            Log.d("ScamDetector", "Skipping notification due to cooldown for $packageName")
+            return
+        }
+        lastAlertTime[packageName] = now
+
         val appName = getAppName(packageName)
         val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+
+        val bigText = "Pesan mencurigakan terdeteksi:\n\n\"${text.take(400)}\"\n\n" +
+                "Tingkat kecurigaan: ${(confidence * 100).toInt()}%\n" +
+                "JANGAN berikan data pribadi, OTP, atau transfer uang!"
 
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_dialog_alert)
             .setContentTitle("⚠️ PERINGATAN SCAM TERDETEKSI")
+            // short summary visible when collapsed
             .setContentText("Kemungkinan penipuan ${(confidence * 100).toInt()}% di $appName")
-            .setStyle(NotificationCompat.BigTextStyle()
-                .bigText("Pesan mencurigakan terdeteksi:\n\n\"${text.take(200)}...\"\n\n" +
-                        "Tingkat kecurigaan: ${(confidence * 100).toInt()}%\n" +
-                        "JANGAN berikan data pribadi, OTP, atau transfer uang!"))
+            .setStyle(NotificationCompat.BigTextStyle().bigText(bigText))
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
             .setVibrate(longArrayOf(0, 500, 200, 500))
             .build()
 
-        notificationManager.notify(System.currentTimeMillis().toInt(), notification)
+        notificationManager.notify((now % Int.MAX_VALUE).toInt(), notification)
         Log.d("ScamDetector", "✓ Notification shown")
     }
 
@@ -298,6 +359,7 @@ class ScamDetectorAccessibilityService : AccessibilityService() {
         if (::interpreter.isInitialized) {
             interpreter.close()
         }
+        handler.removeCallbacksAndMessages(null)
         Log.d("ScamDetector", "Service destroyed")
     }
 

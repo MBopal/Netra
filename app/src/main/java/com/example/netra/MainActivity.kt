@@ -1,5 +1,6 @@
 package com.example.netra
 
+import android.Manifest
 import android.content.Intent
 import android.os.Bundle
 import android.provider.Settings
@@ -8,12 +9,19 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import android.view.accessibility.AccessibilityManager
 import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.appcompat.app.AlertDialog
+import androidx.core.app.ActivityCompat
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var statusText: TextView
     private lateinit var enableButton: Button
     private lateinit var testButton: Button
+
+    private val REQ_POST_NOTIFICATIONS = 1001
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -30,11 +38,29 @@ class MainActivity : AppCompatActivity() {
         testButton.setOnClickListener {
             showTestDialog()
         }
+
+        // Request notification permission at runtime for Android 13+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                ActivityCompat.requestPermissions(
+                    this,
+                    arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+                    REQ_POST_NOTIFICATIONS
+                )
+            }
+        }
     }
 
     override fun onResume() {
         super.onResume()
         updateServiceStatus()
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQ_POST_NOTIFICATIONS) {
+            // no UI required here; permission enables notifications on Android 13+
+        }
     }
 
     private fun updateServiceStatus() {
@@ -75,7 +101,7 @@ class MainActivity : AppCompatActivity() {
             "Terima kasih telah berbelanja di toko kami"
         )
 
-        androidx.appcompat.app.AlertDialog.Builder(this)
+        android.app.AlertDialog.Builder(this)
             .setTitle("Test Deteksi Scam")
             .setMessage("Pilih pesan untuk ditest:")
             .setItems(testMessages) { _, which ->
